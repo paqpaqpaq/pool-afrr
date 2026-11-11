@@ -32,7 +32,7 @@ type: markdown
 title: Pool-aFRR · laatste 24 uur
 content: >-
   {% set nu = (now().timestamp() // 3600 * 3600) | int %}
-  {% for s in states.sensor | selectattr('attributes.kwartieren', 'defined') | sort(attribute='name') %}
+  {% for s in states.sensor | selectattr('attributes.kwartieren', 'defined') | selectattr('entity_id', 'search', '^sensor\\.pool_afrr_') | sort(attribute='name') %}
   **{{ s.name | replace('Pool aFRR ', '') }}** · {{ s.attributes.afrr_24u }} kw<br>
   {%- for i in range(23, -1, -1) %}{% set h0 = nu - i * 3600 %}{% set q = s.attributes.kwartieren | selectattr('0', 'ge', h0) | selectattr('0', 'lt', h0 + 3600) | map(attribute='1') | join %}{{ '🟨' if 'e' in q and 'i' in q else '🟩' if 'e' in q else '🟧' if 'i' in q else '🟦' if s.attributes.kwartieren | selectattr('0', 'ge', h0) | selectattr('0', 'lt', h0 + 3600) | list | count else '⬜' }}{% endfor %}
 
