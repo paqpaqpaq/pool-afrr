@@ -20,12 +20,32 @@ from .const import (
     BROKER_PORT,
     FLAG_TTL_SECONDS,
     HEARTBEAT_SECONDS,
+    HISTORY_KEEP_SECONDS,
+    HISTORY_SECONDS,
     POLL_SECONDS,
     SIGNAL_UPDATE,
     TOPIC_PREFIX,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def clean_history(value) -> dict[int, str]:
+    """Lijst [[start_s, 'e'/'i'/'ie'/''], ...] naar dict, alleen geldige en recente kwartieren."""
+    out: dict[int, str] = {}
+    if not isinstance(value, list):
+        return out
+    cutoff = time.time() - HISTORY_KEEP_SECONDS
+    for item in value[:400]:
+        if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], (int, float)) and isinstance(item[1], str):
+            start = int(item[0]) // 900 * 900
+            if start >= cutoff:
+                out[start] = "".join(c for c in ("i", "e") if c in item[1])
+    return out
+
+
+def dir_letters(direction: str) -> str:
+    return {"export": "e", "import": "i"}.get(direction, "")
 
 
 def own_direction(flag: dict) -> str:
@@ -57,6 +77,9 @@ class PoolHub:
         self._last_sent_t = 0.0
         self._client: mqtt.Client | None = None
         self._unsub = None
+        self._unsub_hist = None
+        self.log: dict[int, str] = {}
+        self._log_sent: tuple | None = None
 
     # ---------- MQTT (draait in de paho-thread; alles terug naar de event loop) ----------
     def _make_client(self) -> mqtt.Client:
@@ -103,6 +126,7 @@ class PoolHub:
             "on": bool(data.get("on")),
             "t": float(data.get("t") or 0),
             "rx": time.time(),
+            "h": clean_history(data.get("h")) if "h" in data else None,
         }
         self.hass.loop.call_soon_threadsafe(self._set_member, name, record)
 
@@ -111,10 +135,13 @@ class PoolHub:
         self.broker_status = status
         if status == "verbonden":
             self._last_sent = None  # na (her)verbinden eigen status opnieuw sturen
+            self._log_sent = None
         self._notify()
 
     @callback
     def _set_member(self, name: str, record: dict) -> None:
+        if record["h"] is None:  # bericht zonder geschiedenis (bijv. offline-melding): vorige houden
+            record["h"] = (self.members.get(name) or {}).get("h") or {}
         self.members[name] = record
         self._notify()
 
@@ -128,12 +155,17 @@ class PoolHub:
         await self.hass.async_add_executor_job(self._client.connect_async, self.host, BROKER_PORT, 30)
         self._client.loop_start()
         self._unsub = async_track_time_interval(self.hass, self._tick, timedelta(seconds=POLL_SECONDS))
+        self._unsub_hist = async_track_time_interval(self.hass, self._history, timedelta(seconds=HISTORY_SECONDS))
+        self.hass.async_create_task(self._history())
         self.hass.async_create_task(self._tick())
 
     async def async_stop(self) -> None:
         if self._unsub:
             self._unsub()
             self._unsub = None
+        if self._unsub_hist:
+            self._unsub_hist()
+            self._unsub_hist = None
         if self._client is not None:
             client = self._client
             self._client = None
@@ -142,11 +174,29 @@ class PoolHub:
 
     def _shutdown_client(self, client: mqtt.Client) -> None:
         try:
-            client.publish(TOPIC_PREFIX + self.name, json.dumps({"n": self.name, "r": "", "on": False, "t": int(time.time())}), qos=1, retain=True)
+            client.publish(TOPIC_PREFIX + self.name, json.dumps({"n": self.name, "r": "", "on": False, "t": int(time.time()), "h": self.history_list()}), qos=1, retain=True)
             client.loop_stop()
             client.disconnect()
         except Exception:  # noqa: BLE001
             pass
+
+    def history_list(self) -> list[list]:
+        cutoff = time.time() - HISTORY_KEEP_SECONDS
+        return [[start, self.log[start]] for start in sorted(self.log) if start >= cutoff]
+
+    async def _history(self, _now=None) -> None:
+        """Eigen aFRR-kwartieren van de afgelopen ~26 uur bij Balans ophalen (met terugwerkende kracht)."""
+        try:
+            rows = await self.balans.history()
+        except (BalansAuthError, BalansConnectionError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("Geschiedenis niet opgehaald: %s", err)
+            return
+        for start, letters in rows:
+            if letters or start not in self.log:
+                self.log[start] = letters
+        cutoff = time.time() - HISTORY_KEEP_SECONDS
+        self.log = {k: v for k, v in self.log.items() if k >= cutoff}
+        self._notify()
 
     async def _tick(self, _now=None) -> None:
         try:
@@ -163,15 +213,19 @@ class PoolHub:
             self._notify()
             return
         now = time.time()
+        if self.own:
+            self.log[int(now) // 900 * 900] = dir_letters(self.own) or self.log.get(int(now) // 900 * 900, "")
         if self._client is not None and self.broker_status == "verbonden":
-            changed = self.own != self._last_sent
+            history = self.history_list()
+            changed = self.own != self._last_sent or tuple(map(tuple, history)) != self._log_sent
             beat = self.own != "" and now - self._last_sent_t >= HEARTBEAT_SECONDS
             if changed or beat:
-                payload = {"n": self.name, "r": self.own, "on": self.own != "", "q": (int(now) // 900) * 900, "t": int(now)}
-                info = self._client.publish(TOPIC_PREFIX + self.name, json.dumps(payload), qos=1, retain=True)
+                payload = {"n": self.name, "r": self.own, "on": self.own != "", "q": (int(now) // 900) * 900, "t": int(now), "h": history}
+                info = self._client.publish(TOPIC_PREFIX + self.name, json.dumps(payload, separators=(",", ":")), qos=1, retain=True)
                 if info.rc == 0:
                     self._last_sent = self.own
                     self._last_sent_t = now
+                    self._log_sent = tuple(map(tuple, history))
         self._notify()
 
     # ---------- afgeleide toestand ----------
@@ -182,6 +236,11 @@ class PoolHub:
         if time.time() - max(member["t"], member["rx"] - 5) > FLAG_TTL_SECONDS:
             return ""
         return member["r"]
+
+    def history_of(self, name: str) -> list[list]:
+        member = self.members.get(name) or {}
+        log = member.get("h") or {}
+        return [[start, log[start]] for start in sorted(log)]
 
     def others(self, direction: str) -> list[str]:
         return sorted(n for n in self.members if n != self.name and self.direction_of(n) == direction)

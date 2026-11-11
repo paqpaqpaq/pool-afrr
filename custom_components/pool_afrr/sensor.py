@@ -31,6 +31,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_UPDATE.format(entry.entry_id), add_members))
 
 
+def history_attrs(rows: list[list]) -> dict:
+    """kwartieren: [[start_s, 'e'/'i'/'ie'/''], ...] van de afgelopen 48 uur; plus tellers voor de laatste 24 uur."""
+    import time
+
+    day = time.time() - 86400
+    recent = [row for row in rows if row[0] >= day]
+    return {
+        "kwartieren": rows,
+        "export_24u": sum(1 for row in recent if "e" in row[1]),
+        "import_24u": sum(1 for row in recent if "i" in row[1]),
+        "afrr_24u": len(recent),
+    }
+
+
 class PoolEntity(SensorEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
@@ -73,9 +87,15 @@ class PoolOwn(PoolEntity):
     def __init__(self, hub, entry):
         super().__init__(hub, entry, "own")
 
+    _unrecorded_attributes = frozenset({"kwartieren"})
+
     @property
     def native_value(self):
         return self.hub.own or "geen"
+
+    @property
+    def extra_state_attributes(self):
+        return history_attrs(self.hub.history_list())
 
 
 class PoolStatus(PoolEntity):
@@ -103,9 +123,15 @@ class PoolMember(PoolEntity):
         self._member = name
         self._attr_name = name
 
+    _unrecorded_attributes = frozenset({"kwartieren"})
+
     @property
     def native_value(self):
         return self.hub.direction_of(self._member) or "geen"
+
+    @property
+    def extra_state_attributes(self):
+        return history_attrs(self.hub.history_of(self._member))
 
     @property
     def icon(self):

@@ -10,6 +10,7 @@ import aiohttp
 from .const import BALANS_BASE
 
 QUARTER_MS = 900_000
+HISTORY_HOURS = 26
 UA = "Mozilla/5.0 (HomeAssistant pool-aFRR)"
 
 
@@ -75,24 +76,33 @@ class BalansClient:
             await self.login()
             return await self._fetch()
 
+    async def history(self) -> list[list]:
+        """aFRR-kwartieren van de afgelopen ~26 uur (Balans geeft maximaal 27 uur terug): [[start_s, 'e'/'i'/'ie'/''], ...]."""
+        now_ms = int(time.time() * 1000)
+        start = (now_ms // QUARTER_MS) * QUARTER_MS - HISTORY_HOURS * 3_600_000
+        try:
+            payload = await self._get(start, now_ms)
+        except BalansAuthError:
+            await self.login()
+            payload = await self._get(start, now_ms)
+        events = payload.get("afrrEventIsps")
+        if not isinstance(events, list):
+            return []
+        dirs: dict[int, str] = {}
+        for item in payload.get("afrrDiscovery") or []:
+            if isinstance(item, dict) and isinstance(item.get("start"), (int, float)):
+                values = item.get("directions")
+                if isinstance(values, list) and values:
+                    dirs[int(item["start"])] = ("i" if "import" in values else "") + ("e" if "export" in values else "")
+        out = []
+        for quarter in sorted(set(int(q) for q in events if isinstance(q, (int, float)))):
+            out.append([quarter // 1000, dirs.get(quarter, "")])
+        return out
+
     async def _fetch(self) -> dict:
-        session = await self._ensure_session()
         now_ms = int(time.time() * 1000)
         quarter = (now_ms // QUARTER_MS) * QUARTER_MS
-        try:
-            async with session.get(
-                BALANS_BASE + "/customer/current-prices/api/",
-                params={"start": quarter, "end": now_ms},
-                headers={"Accept": "application/json", "Referer": BALANS_BASE + "/customer/current-prices/"},
-                allow_redirects=False,
-            ) as reply:
-                if reply.status in (301, 302, 303, 401, 403):
-                    raise BalansAuthError("Sessie verlopen")
-                if reply.status != 200 or "json" not in reply.headers.get("content-type", ""):
-                    raise BalansConnectionError(f"HTTP {reply.status}")
-                payload = await reply.json()
-        except aiohttp.ClientError as err:
-            raise BalansConnectionError(str(err)) from err
+        payload = await self._get(quarter, now_ms)
         events = payload.get("afrrEventIsps")
         afrr = (1 if quarter in events else 0) if isinstance(events, list) else 0
         directions = ""
@@ -104,3 +114,23 @@ class BalansClient:
                 directions = ("i" if "import" in values else "") + ("e" if "export" in values else "")
                 break
         return {"af": afrr, "ad": directions, "s": quarter // 1000}
+
+    async def _get(self, start_ms: int, end_ms: int) -> dict:
+        session = await self._ensure_session()
+        try:
+            async with session.get(
+                BALANS_BASE + "/customer/current-prices/api/",
+                params={"start": start_ms, "end": end_ms},
+                headers={"Accept": "application/json", "Referer": BALANS_BASE + "/customer/current-prices/"},
+                allow_redirects=False,
+            ) as reply:
+                if reply.status in (301, 302, 303, 401, 403):
+                    raise BalansAuthError("Sessie verlopen")
+                if reply.status != 200 or "json" not in reply.headers.get("content-type", ""):
+                    raise BalansConnectionError(f"HTTP {reply.status}")
+                payload = await reply.json()
+        except aiohttp.ClientError as err:
+            raise BalansConnectionError(str(err)) from err
+        if not isinstance(payload, dict):
+            raise BalansConnectionError("Onverwacht antwoord")
+        return payload
