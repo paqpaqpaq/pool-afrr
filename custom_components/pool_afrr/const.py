@@ -11,6 +11,8 @@ CONF_BE_USERNAME = "be_username"
 CONF_BE_PASSWORD = "be_password"
 CONF_NAME = "name"
 CONF_POOL_CODE = "pool_code"
+CONF_SOC = "soc_sensor"
+STALE_OFFLINE_SECONDS = 6 * 3600
 
 POLL_SECONDS = 10
 HEARTBEAT_SECONDS = 30

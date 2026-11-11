@@ -10,10 +10,11 @@ import paho.mqtt.client as mqtt
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
+from homeassistant.core import callback
+from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig, TextSelector, TextSelectorConfig, TextSelectorType
 
 from .balans import BalansAuthError, BalansClient, BalansConnectionError
-from .const import BROKER_PORT, CONF_BE_PASSWORD, CONF_BE_USERNAME, CONF_HOST, CONF_NAME, CONF_POOL_CODE, DOMAIN
+from .const import BROKER_PORT, CONF_BE_PASSWORD, CONF_BE_USERNAME, CONF_HOST, CONF_NAME, CONF_POOL_CODE, CONF_SOC, DOMAIN
 
 SCHEMA = vol.Schema(
     {
@@ -22,6 +23,7 @@ SCHEMA = vol.Schema(
         vol.Required(CONF_BE_PASSWORD): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
         vol.Required(CONF_NAME): TextSelector(),
         vol.Required(CONF_POOL_CODE): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+        vol.Optional(CONF_SOC): EntitySelector(EntitySelectorConfig(domain="sensor")),
     }
 )
 
@@ -84,3 +86,19 @@ class PoolAfrrConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not errors:
                 return self.async_create_entry(title=f"Pool aFRR · {name}", data=user_input)
         return self.async_show_form(step_id="user", data_schema=SCHEMA, errors=errors)
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(entry):
+        return PoolOptionsFlow()
+
+
+class PoolOptionsFlow(config_entries.OptionsFlow):
+    """Later instellen welke SOC-sensor wordt gedeeld."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+        current = self.config_entry.options.get(CONF_SOC) or self.config_entry.data.get(CONF_SOC)
+        schema = vol.Schema({vol.Optional(CONF_SOC, description={"suggested_value": current}): EntitySelector(EntitySelectorConfig(domain="sensor"))})
+        return self.async_show_form(step_id="init", data_schema=schema)
