@@ -117,7 +117,7 @@ custom_fields:
         <span class="tl-leg"><i class="e"></i>export <i class="i"></i>import <i class="b"></i>beide</span></div>
       ${rows.length ? rows.map(r => html`
         <div class="tl-row">
-          <div class="tl-name">${r.name}<small>${Number.isFinite(r.soc) ? 'SOC ' + r.soc + '% · ' : ''}${r.n} ${r.n === 1 ? 'kwartier' : 'kwartieren'}${r.now !== 'geen' ? html` · <b class="${r.now === 'export' ? 'te' : 'ti'}">nu ${r.now}</b>` : ''}</small></div>
+          <div class="tl-name">${r.name}<small>${[Number.isFinite(r.soc) ? 'SOC ' + r.soc + '%' : '', r.now !== 'geen' ? html`<b class="${r.now === 'export' ? 'te' : 'ti'}">nu ${r.now}</b>` : ''].filter(v => v).map((v, i) => i ? html` · ${v}` : v)}</small></div>
           <div class="tl-bar" data-name="${r.name}" @pointermove=${tip} @pointerdown=${tip} @pointerleave=${tip}>${r.cells.map((c, k) => html`<span class="${c.d === null ? '' : cls(c.d)}${st && st.name === r.name && st.k === k ? ' hov' : ''}" data-tip="${t(c.q)}–${t(c.q + Q)} · ${c.d === null ? 'geen aFRR' : label(c.d)}${c.b ? (Number.isFinite(c.b.soc) ? ' · gestart ' + t(c.b.from) + ' bij SOC ' + c.b.soc + '%' : '') + (Number.isFinite(c.soc) ? ' · dit kwartier ' + c.soc + (Number.isFinite(c.soce) && c.soce !== c.soc ? '→' + c.soce : '') + '%' : '') : (Number.isFinite(c.soc) ? ' · SOC ' + c.soc + '%' : '')}"></span>`)}</div>
         </div>`) : html`<div class="tl-none">Nog geen geschiedenis.</div>`}
       <div class="tl-row tl-axis"><div></div><div class="tl-ticks">${ticks.map(x => html`<span style="left:${x.k / N * 100}%">${t(x.q)}</span>`)}</div></div>
