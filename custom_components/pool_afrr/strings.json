@@ -1,0 +1,51 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Pool aFRR",
+        "description": "Vul het pooladres en de poolcode in die je van de beheerder kreeg, en log in met je Balans Energie-account. Je wachtwoord blijft in je eigen Home Assistant; naar de pool gaan alleen je naam en de richting van je aFRR.",
+        "data": {
+          "host": "Pooladres",
+          "be_username": "Balans e-mail",
+          "be_password": "Balans wachtwoord",
+          "name": "Je naam in de pool",
+          "pool_code": "Poolcode"
+        }
+      }
+    },
+    "error": {
+      "balans_auth": "Balans weigert deze e-mail of dit wachtwoord.",
+      "balans_unreachable": "Balans Energie is niet bereikbaar.",
+      "broker_auth": "Naam of poolcode klopt niet. Je naam moet gelijk zijn aan de login die de beheerder voor je aanmaakte.",
+      "broker_unreachable": "De poolserver is niet bereikbaar. Controleer het pooladres."
+    },
+    "abort": {
+      "already_configured": "Deze naam is al ingesteld."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "pool": {
+        "name": "Pool",
+        "state": {
+          "export": "export",
+          "import": "import",
+          "beide": "beide",
+          "geen": "geen"
+        }
+      },
+      "own": {
+        "name": "Eigen aFRR",
+        "state": {
+          "export": "export",
+          "import": "import",
+          "afrr": "aFRR",
+          "geen": "geen"
+        }
+      },
+      "status": {
+        "name": "Verbinding"
+      }
+    }
+  }
+}

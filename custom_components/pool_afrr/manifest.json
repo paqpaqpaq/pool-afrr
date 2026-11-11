@@ -1,0 +1,11 @@
+{
+  "domain": "pool_afrr",
+  "name": "Pool aFRR",
+  "codeowners": ["@paqpaqpaq"],
+  "config_flow": true,
+  "documentation": "https://github.com/paqpaqpaq/pool-afrr",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/paqpaqpaq/pool-afrr/issues",
+  "requirements": ["paho-mqtt"],
+  "version": "0.1.0"
+}
