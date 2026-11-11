@@ -108,7 +108,7 @@ custom_fields:
         <span class="tl-leg"><i class="e"></i>export <i class="i"></i>import <i class="b"></i>beide</span></div>
       ${rows.length ? rows.map(r => html`
         <div class="tl-row">
-          <div class="tl-name">${r.name}<small>${r.n} kw${r.now !== 'geen' ? html` · <b class="${r.now === 'export' ? 'te' : 'ti'}">nu ${r.now}</b>` : ''}</small></div>
+          <div class="tl-name">${r.name}<small>${r.n} ${r.n === 1 ? 'kwartier' : 'kwartieren'}${r.now !== 'geen' ? html` · <b class="${r.now === 'export' ? 'te' : 'ti'}">nu ${r.now}</b>` : ''}</small></div>
           <div class="tl-bar" data-name="${r.name}" @pointermove=${tip} @pointerdown=${tip} @pointerleave=${tip}>${r.cells.map((c, k) => html`<span class="${c.d === null ? '' : cls(c.d)}${st && st.name === r.name && st.k === k ? ' hov' : ''}" data-tip="${t(c.q)}–${t(c.q + Q)} · ${c.d === null ? 'geen aFRR' : label(c.d)}"></span>`)}</div>
         </div>`) : html`<div class="tl-none">Nog geen geschiedenis.</div>`}
       <div class="tl-row tl-axis"><div></div><div class="tl-ticks">${ticks.map(x => html`<span style="left:${x.k / N * 100}%">${t(x.q)}</span>`)}</div></div>
@@ -125,7 +125,7 @@ title: Pool-aFRR · laatste 24 uur
 content: >-
   {% set nu = (now().timestamp() // 3600 * 3600) | int %}
   {% for s in states.sensor | selectattr('attributes.kwartieren', 'defined') | selectattr('entity_id', 'search', '^sensor\\.pool_afrr_') | sort(attribute='name') %}
-  **{{ s.name | replace('Pool aFRR ', '') }}** · {{ s.attributes.afrr_24u }} kw<br>
+  **{{ s.name | replace('Pool aFRR ', '') }}** · {{ s.attributes.afrr_24u }} kwartieren<br>
   {%- for i in range(23, -1, -1) %}{% set h0 = nu - i * 3600 %}{% set q = s.attributes.kwartieren | selectattr('0', 'ge', h0) | selectattr('0', 'lt', h0 + 3600) | map(attribute='1') | join %}{{ '🟨' if 'e' in q and 'i' in q else '🟩' if 'e' in q else '🟧' if 'i' in q else '🟦' if s.attributes.kwartieren | selectattr('0', 'ge', h0) | selectattr('0', 'lt', h0 + 3600) | list | count else '⬜' }}{% endfor %}
 
   {% endfor %}
