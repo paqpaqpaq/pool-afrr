@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 
@@ -29,6 +30,7 @@ class BalansClient:
         self._username = username
         self._password = password
         self._session: aiohttp.ClientSession | None = None
+        self._installation: str | None = None
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -97,6 +99,66 @@ class BalansClient:
         out = []
         for quarter in sorted(set(int(q) for q in events if isinstance(q, (int, float)))):
             out.append([quarter // 1000, dirs.get(quarter, "")])
+        return out
+
+    async def soc_history(self, hours: float) -> list[list]:
+        """SOC-metingen uit het BE-dashboard (Balans bewaart ~25 uur): [[t_s, soc], ...]."""
+        try:
+            return await self._soc_rows(hours)
+        except BalansAuthError:
+            await self.login()
+            self._installation = None
+            return await self._soc_rows(hours)
+
+    async def _installation_id(self) -> str:
+        if self._installation:
+            return self._installation
+        session = await self._ensure_session()
+        try:
+            async with session.get(BALANS_BASE + "/customer/", allow_redirects=False) as page:
+                if page.status in (301, 302, 303, 401, 403):
+                    raise BalansAuthError("Sessie verlopen")
+                text = await page.text()
+        except aiohttp.ClientError as err:
+            raise BalansConnectionError(str(err)) from err
+        match = re.search(r'id=["\']current-history-config["\'][^>]*>(.*?)</script>', text, re.S)
+        try:
+            installation = json.loads(match.group(1)).get("installation") if match else None
+        except ValueError:
+            installation = None
+        if not installation:
+            raise BalansConnectionError("Installatie niet gevonden op het dashboard")
+        self._installation = str(installation)
+        return self._installation
+
+    async def _soc_rows(self, hours: float) -> list[list]:
+        installation = await self._installation_id()
+        session = await self._ensure_session()
+        now_ms = int(time.time() * 1000)
+        try:
+            async with session.get(
+                BALANS_BASE + "/customer/current-history/api/",
+                params={"installation": installation, "start": now_ms - int(hours * 3_600_000), "end": now_ms},
+                headers={"Accept": "application/json", "Referer": BALANS_BASE + "/customer/"},
+                allow_redirects=False,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as reply:
+                if reply.status in (301, 302, 303, 401, 403):
+                    raise BalansAuthError("Sessie verlopen")
+                if reply.status == 409:  # andere installatie actief: opnieuw opzoeken
+                    self._installation = None
+                    raise BalansConnectionError("Installatie gewijzigd")
+                if reply.status != 200 or "json" not in reply.headers.get("content-type", ""):
+                    raise BalansConnectionError(f"HTTP {reply.status}")
+                payload = await reply.json()
+        except aiohttp.ClientError as err:
+            raise BalansConnectionError(str(err)) from err
+        rows = payload.get("rows") if isinstance(payload, dict) else None
+        out = []
+        for row in rows or []:
+            if isinstance(row, dict) and isinstance(row.get("t"), (int, float)) and isinstance(row.get("s"), (int, float)) and 0 <= row["s"] <= 100:
+                out.append([row["t"] / 1000, row["s"]])
+        out.sort()
         return out
 
     async def _fetch(self) -> dict:

@@ -17,8 +17,10 @@ Home Assistant-integratie voor een groep Balans Energie-gebruikers: deelt wie er
 - **Verbinding** – status van de poolverbinding (+ Balans-status als attribuut)
 - per deelnemer een sensor met diens richting
 
-## SOC delen (optioneel)
-Kies bij het instellen, of later via **Configureren**, de SOC-sensor van je accu. De integratie deelt dan je huidige SOC en de SOC aan het eind van elk kwartier (48 uur). Anderen zien dat als attributen `soc` en `soc_kwartieren` op jouw ledensensor; de tijdlijnkaart toont het in de tooltip.
+## SOC (automatisch uit het BE-dashboard)
+De integratie leest je accu-SOC uit je eigen Balans Energie-dashboard, met terugwerkende kracht (~25 uur). Per kwartier deelt hij de SOC bij de start en aan het eind, zodat iedereen ziet bij welke SOC een aFRR-actie liep. Anderen zien dat als attributen `soc`, `soc_kwartieren` (start) en `soc_kwartier_eind` op jouw ledensensor; de tijdlijnkaart toont het in de tooltip (bijv. `SOC 62→48%`).
+
+Je hoeft niets in te stellen. Via **Configureren** kun je optioneel een reserve-SOC-sensor kiezen; die wordt alleen gebruikt als het dashboard 20 minuten geen SOC geeft.
 
 ## Geschiedenis (met terugwerkende kracht)
 Elke deelnemer haalt bij Balans zijn eigen aFRR-kwartieren van de afgelopen ~26 uur op en deelt die met de pool. Je ziet dus meteen de activaties van iedereen, ook van vóór je meedeed (tot 48 uur bewaard zolang de anderen verbonden zijn).
@@ -82,7 +84,8 @@ custom_fields:
       .map(s => {
         const map = new Map(s.attributes.kwartieren.map(r => [r[0], r[1]]));
         const socs = new Map((s.attributes.soc_kwartieren || []).map(r => [r[0], r[1]]));
-        const cells = Array.from({length: N}, (_, k) => { const q = start + k * Q; return {q, d: map.has(q) ? map.get(q) : null, soc: socs.get(q)}; });
+        const ends = new Map((s.attributes.soc_kwartier_eind || []).map(r => [r[0], r[1]]));
+        const cells = Array.from({length: N}, (_, k) => { const q = start + k * Q; return {q, d: map.has(q) ? map.get(q) : null, soc: socs.get(q), soce: ends.get(q)}; });
         const own = s.entity_id === 'sensor.pool_afrr_eigen_afrr';
         return {name: own ? 'Jij' : (s.attributes.friendly_name || '').replace(/^Pool aFRR\s*/, ''), own, now: s.state, soc: s.attributes.soc,
           cells, n: cells.filter(c => c.d !== null).length};
@@ -113,7 +116,7 @@ custom_fields:
       ${rows.length ? rows.map(r => html`
         <div class="tl-row">
           <div class="tl-name">${r.name}<small>${Number.isFinite(r.soc) ? 'SOC ' + r.soc + '% · ' : ''}${r.n} ${r.n === 1 ? 'kwartier' : 'kwartieren'}${r.now !== 'geen' ? html` · <b class="${r.now === 'export' ? 'te' : 'ti'}">nu ${r.now}</b>` : ''}</small></div>
-          <div class="tl-bar" data-name="${r.name}" @pointermove=${tip} @pointerdown=${tip} @pointerleave=${tip}>${r.cells.map((c, k) => html`<span class="${c.d === null ? '' : cls(c.d)}${st && st.name === r.name && st.k === k ? ' hov' : ''}" data-tip="${t(c.q)}–${t(c.q + Q)} · ${c.d === null ? 'geen aFRR' : label(c.d)}${Number.isFinite(c.soc) ? ' · SOC ' + c.soc + '%' : ''}"></span>`)}</div>
+          <div class="tl-bar" data-name="${r.name}" @pointermove=${tip} @pointerdown=${tip} @pointerleave=${tip}>${r.cells.map((c, k) => html`<span class="${c.d === null ? '' : cls(c.d)}${st && st.name === r.name && st.k === k ? ' hov' : ''}" data-tip="${t(c.q)}–${t(c.q + Q)} · ${c.d === null ? 'geen aFRR' : label(c.d)}${Number.isFinite(c.soc) ? ' · SOC ' + c.soc + (Number.isFinite(c.soce) && c.soce !== c.soc ? '→' + c.soce : '') + '%' : ''}"></span>`)}</div>
         </div>`) : html`<div class="tl-none">Nog geen geschiedenis.</div>`}
       <div class="tl-row tl-axis"><div></div><div class="tl-ticks">${ticks.map(x => html`<span style="left:${x.k / N * 100}%">${t(x.q)}</span>`)}</div></div>
     </div>`;

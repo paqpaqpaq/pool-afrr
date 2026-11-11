@@ -10,7 +10,7 @@
           "be_password": "Balans wachtwoord",
           "name": "Je naam in de pool",
           "pool_code": "Poolcode",
-          "soc_sensor": "Accu-SOC om te delen (optioneel)"
+          "soc_sensor": "Reserve-SOC-sensor (optioneel, SOC komt uit het BE-dashboard)"
         }
       }
     },
@@ -53,9 +53,9 @@
     "step": {
       "init": {
         "title": "Pool aFRR",
-        "description": "Kies de SOC-sensor van je accu. Die wordt elk kwartier met de pool gedeeld.",
+        "description": "De SOC komt automatisch uit je BE-dashboard. Kies hier alleen een reserve-sensor voor als het dashboard geen SOC geeft.",
         "data": {
-          "soc_sensor": "Accu-SOC om te delen"
+          "soc_sensor": "Reserve-SOC-sensor"
         }
       }
     }

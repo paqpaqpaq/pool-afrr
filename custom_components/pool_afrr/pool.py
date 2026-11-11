@@ -95,9 +95,14 @@ class PoolHub:
         self.log: dict[int, str] = {}
         self.soc_entity: str | None = None
         self.soc_now: int | None = None
-        self.soc_log: dict[int, int] = {}
+        self.soc_log: dict[int, int] = {}  # SOC bij de start van het kwartier
+        self.soc_end: dict[int, int] = {}  # SOC aan het eind van het kwartier
+        self.soc_t = 0.0  # laatste SOC-meting uit het BE-dashboard
+        self._soc_full = False
+        self._soc_off: dict[int, float] = {}
+        self._soc_end_off: dict[int, float] = {}
         self._log_sent: tuple | None = None
-        self._soc_sent: int | None = None
+        self._soc_sent: tuple | None = None
 
     # ---------- MQTT (draait in de paho-thread; alles terug naar de event loop) ----------
     def _make_client(self) -> mqtt.Client:
@@ -156,6 +161,7 @@ class PoolHub:
             "h": clean_history(data.get("h")) if "h" in data else None,
             "soc": int(data["soc"]) if isinstance(data.get("soc"), (int, float)) and 0 <= data["soc"] <= 100 else None,
             "hs": clean_soc(data.get("hs")) if "hs" in data else None,
+            "he": clean_soc(data.get("he")) if "he" in data else None,
         }
         self.hass.loop.call_soon_threadsafe(self._set_member, name, record)
 
@@ -179,6 +185,8 @@ class PoolHub:
             record["h"] = old.get("h") or {}
         if record["hs"] is None:
             record["hs"] = old.get("hs") or {}
+        if record["he"] is None:
+            record["he"] = old.get("he") or {}
         self.members[name] = record
         self._notify()
 
@@ -217,11 +225,49 @@ class PoolHub:
         except Exception:  # noqa: BLE001
             pass
 
-    def soc_list(self) -> list[list]:
+    def soc_list(self, log: dict | None = None) -> list[list]:
+        log = self.soc_log if log is None else log
         cutoff = time.time() - HISTORY_KEEP_SECONDS
-        return [[start, self.soc_log[start]] for start in sorted(self.soc_log) if start >= cutoff]
+        return [[start, log[start]] for start in sorted(log) if start >= cutoff]
+
+    def _prune_soc(self, now: float) -> None:
+        cutoff = now - HISTORY_KEEP_SECONDS
+        for log in (self.soc_log, self.soc_end):
+            for key in [k for k in log if k < cutoff]:
+                del log[key]
+
+    async def _balans_soc(self) -> None:
+        """SOC uit het BE-dashboard: eerst ~25 uur terug, daarna steeds het laatste uur."""
+        try:
+            rows = await self.balans.soc_history(1.5 if self._soc_full else 24.9)
+        except (BalansAuthError, BalansConnectionError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("SOC uit BE-dashboard niet opgehaald: %s", err)
+            return
+        if not rows:
+            return
+        self._soc_full = True
+        for t, soc in rows:  # oplopend in tijd
+            quarter = int(t) // 900 * 900
+            value = int(round(soc))
+            offset = t - quarter
+            if quarter not in self.soc_log or offset < self._soc_off.get(quarter, 900):
+                self.soc_log[quarter] = value  # vroegste meting in het kwartier = SOC bij de start
+                self._soc_off[quarter] = offset
+            if offset >= self._soc_end_off.get(quarter, -1):
+                self.soc_end[quarter] = value  # laatste meting = SOC aan het eind
+                self._soc_end_off[quarter] = offset
+        last_t, last = rows[-1]
+        if last_t >= self.soc_t:
+            self.soc_t = last_t
+            self.soc_now = int(round(last))
+        self._prune_soc(time.time())
+        self._soc_off = {q: v for q, v in self._soc_off.items() if q in self.soc_log}
+        self._soc_end_off = {q: v for q, v in self._soc_end_off.items() if q in self.soc_end}
 
     def _read_soc(self, now: float) -> None:
+        """Reserve: HA-sensor gebruiken als het BE-dashboard al 20 minuten geen SOC gaf."""
+        if now - self.soc_t < 1200:
+            return
         st = self.hass.states.get(self.soc_entity) if self.soc_entity else None
         try:
             value = float(st.state) if st else None
@@ -231,10 +277,10 @@ class PoolHub:
             self.soc_now = None
             return
         self.soc_now = int(round(value))
-        self.soc_log[int(now) // 900 * 900] = self.soc_now  # laatste waarde = SOC aan het kwartiereinde
-        cutoff = now - HISTORY_KEEP_SECONDS
-        for key in [k for k in self.soc_log if k < cutoff]:
-            del self.soc_log[key]
+        quarter = int(now) // 900 * 900
+        self.soc_log.setdefault(quarter, self.soc_now)
+        self.soc_end[quarter] = self.soc_now
+        self._prune_soc(now)
 
     def history_list(self) -> list[list]:
         cutoff = time.time() - HISTORY_KEEP_SECONDS
@@ -242,10 +288,12 @@ class PoolHub:
 
     async def _history(self, _now=None) -> None:
         """Eigen aFRR-kwartieren van de afgelopen ~26 uur bij Balans ophalen (met terugwerkende kracht)."""
+        await self._balans_soc()
         try:
             rows = await self.balans.history()
         except (BalansAuthError, BalansConnectionError, asyncio.TimeoutError) as err:
             _LOGGER.debug("Geschiedenis niet opgehaald: %s", err)
+            self._notify()
             return
         for start, letters in rows:
             if letters or start not in self.log:
@@ -275,17 +323,19 @@ class PoolHub:
         if self._client is not None and self.broker_status == "verbonden":
             history = self.history_list()
             socs = self.soc_list()
-            changed = self.own != self._last_sent or tuple(map(tuple, history)) != self._log_sent or self.soc_now != self._soc_sent
+            ends = self.soc_list(self.soc_end)
+            soc_key = (self.soc_now, tuple(map(tuple, socs)), tuple(map(tuple, ends)))
+            changed = self.own != self._last_sent or tuple(map(tuple, history)) != self._log_sent or soc_key != self._soc_sent
             beat = self.own != "" and now - self._last_sent_t >= HEARTBEAT_SECONDS
             if changed or beat:
                 payload = {"n": self.name, "r": self.own, "on": self.own != "", "q": (int(now) // 900) * 900, "t": int(now), "h": history,
-                           "soc": self.soc_now, "hs": socs}
+                           "soc": self.soc_now, "hs": socs, "he": ends}
                 info = self._client.publish(TOPIC_PREFIX + self.name, json.dumps(payload, separators=(",", ":")), qos=1, retain=True)
                 if info.rc == 0:
                     self._last_sent = self.own
                     self._last_sent_t = now
                     self._log_sent = tuple(map(tuple, history))
-                    self._soc_sent = self.soc_now
+                    self._soc_sent = soc_key
         self._notify()
 
     # ---------- afgeleide toestand ----------
@@ -300,7 +350,9 @@ class PoolHub:
     def soc_of(self, name: str):
         member = self.members.get(name) or {}
         log = member.get("hs") or {}
-        return member.get("soc"), [[start, log[start]] for start in sorted(log)]
+        ends = member.get("he") or {}
+        return (member.get("soc"), [[start, log[start]] for start in sorted(log)],
+                [[start, ends[start]] for start in sorted(ends)])
 
     def history_of(self, name: str) -> list[list]:
         member = self.members.get(name) or {}

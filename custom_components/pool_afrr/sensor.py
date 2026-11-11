@@ -31,7 +31,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     entry.async_on_unload(async_dispatcher_connect(hass, SIGNAL_UPDATE.format(entry.entry_id), add_members))
 
 
-def history_attrs(rows: list[list], soc=None, socs=None) -> dict:
+def history_attrs(rows: list[list], soc=None, socs=None, ends=None) -> dict:
     """kwartieren: [[start_s, 'e'/'i'/'ie'/''], ...] van de afgelopen 48 uur; plus tellers voor de laatste 24 uur."""
     import time
 
@@ -43,7 +43,8 @@ def history_attrs(rows: list[list], soc=None, socs=None) -> dict:
         "import_24u": sum(1 for row in recent if "i" in row[1]),
         "afrr_24u": len(recent),
         "soc": soc,
-        "soc_kwartieren": socs or [],
+        "soc_kwartieren": socs or [],  # SOC bij de start van het kwartier
+        "soc_kwartier_eind": ends or [],  # SOC aan het eind van het kwartier
     }
 
 
@@ -89,7 +90,7 @@ class PoolOwn(PoolEntity):
     def __init__(self, hub, entry):
         super().__init__(hub, entry, "own")
 
-    _unrecorded_attributes = frozenset({"kwartieren", "soc_kwartieren"})
+    _unrecorded_attributes = frozenset({"kwartieren", "soc_kwartieren", "soc_kwartier_eind"})
 
     @property
     def native_value(self):
@@ -97,7 +98,7 @@ class PoolOwn(PoolEntity):
 
     @property
     def extra_state_attributes(self):
-        return history_attrs(self.hub.history_list(), self.hub.soc_now, self.hub.soc_list())
+        return history_attrs(self.hub.history_list(), self.hub.soc_now, self.hub.soc_list(), self.hub.soc_list(self.hub.soc_end))
 
 
 class PoolStatus(PoolEntity):
@@ -125,7 +126,7 @@ class PoolMember(PoolEntity):
         self._member = name
         self._attr_name = name
 
-    _unrecorded_attributes = frozenset({"kwartieren", "soc_kwartieren"})
+    _unrecorded_attributes = frozenset({"kwartieren", "soc_kwartieren", "soc_kwartier_eind"})
 
     @property
     def native_value(self):
@@ -133,8 +134,8 @@ class PoolMember(PoolEntity):
 
     @property
     def extra_state_attributes(self):
-        soc, socs = self.hub.soc_of(self._member)
-        return history_attrs(self.hub.history_of(self._member), soc, socs)
+        soc, socs, ends = self.hub.soc_of(self._member)
+        return history_attrs(self.hub.history_of(self._member), soc, socs, ends)
 
     @property
     def icon(self):
