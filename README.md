@@ -30,7 +30,7 @@ Attributen op elke ledensensor en op **Eigen aFRR**:
 - `export_24u`, `import_24u`, `afrr_24u` – aantal kwartieren in de laatste 24 uur
 
 ### Kaart: laatste 24 uur per kwartier
-Vereist [button-card](https://github.com/custom-cards/button-card) (HACS). Per lid een balk van 96 kwartieren met tijdas; wijs (of tik) een kwartier aan voor tijd en richting.
+Vereist [button-card](https://github.com/custom-cards/button-card) (HACS). Per lid een balk van 96 kwartieren met tijdas; wijs (of tik) een kwartier aan voor tijd, richting en bij welke SOC het aFRR-blok begon.
 
 Dashboard bewerken → kaart toevoegen → **Handmatig** → plak:
 
@@ -89,8 +89,7 @@ custom_fields:
         let run = null;  // aaneengesloten aFRR-blok: SOC bij de start onthouden
         for (const c of cells) { if (c.d === null) { run = null; continue; } if (!run || run.d !== c.d) run = {from: c.q, d: c.d, soc: c.soc}; c.b = run; }
         const own = s.entity_id === 'sensor.pool_afrr_eigen_afrr';
-        return {name: own ? 'Jij' : (s.attributes.friendly_name || '').replace(/^Pool aFRR\s*/, ''), own, now: s.state, soc: s.attributes.soc,
-          cells, n: cells.filter(c => c.d !== null).length};
+        return {name: own ? 'Jij' : (s.attributes.friendly_name || '').replace(/^Pool aFRR\s*/, ''), own, now: s.state, soc: s.attributes.soc, cells};
       })
       .sort((a, b) => (b.own - a.own) || a.name.localeCompare(b.name));
     const tip = ev => {
@@ -134,7 +133,7 @@ title: Pool-aFRR · laatste 24 uur
 content: >-
   {% set nu = (now().timestamp() // 3600 * 3600) | int %}
   {% for s in states.sensor | selectattr('attributes.kwartieren', 'defined') | selectattr('entity_id', 'search', '^sensor\\.pool_afrr_') | sort(attribute='name') %}
-  **{{ s.name | replace('Pool aFRR ', '') }}** · {{ s.attributes.afrr_24u }} kwartieren<br>
+  **{{ s.name | replace('Pool aFRR ', '') }}**{{ ' · SOC ' ~ s.attributes.soc ~ '%' if s.attributes.soc is number else '' }}<br>
   {%- for i in range(23, -1, -1) %}{% set h0 = nu - i * 3600 %}{% set q = s.attributes.kwartieren | selectattr('0', 'ge', h0) | selectattr('0', 'lt', h0 + 3600) | map(attribute='1') | join %}{{ '🟨' if 'e' in q and 'i' in q else '🟩' if 'e' in q else '🟧' if 'i' in q else '🟦' if s.attributes.kwartieren | selectattr('0', 'ge', h0) | selectattr('0', 'lt', h0 + 3600) | list | count else '⬜' }}{% endfor %}
 
   {% endfor %}
