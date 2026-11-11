@@ -24,7 +24,99 @@ Attributen op elke ledensensor en op **Eigen aFRR**:
 - `kwartieren` – `[[start (unix s), "e"/"i"/"ie"/""], ...]`
 - `export_24u`, `import_24u`, `afrr_24u` – aantal kwartieren in de laatste 24 uur
 
-### Kaart: laatste 24 uur per uur
+### Kaart: laatste 24 uur per kwartier
+Vereist [button-card](https://github.com/custom-cards/button-card) (HACS). Per lid een balk van 96 kwartieren met tijdas; wijs (of tik) een kwartier aan voor tijd en richting.
+
+Dashboard bewerken → kaart toevoegen → **Handmatig** → plak:
+
+```yaml
+type: custom:button-card
+triggers_update: all
+show_name: false
+show_icon: false
+show_state: false
+tap_action: {action: none}
+hold_action: {action: none}
+styles:
+  card: [{padding: 0}, {border-radius: 16px}, {cursor: default}]
+  grid: [{grid-template-areas: '"body"'}, {grid-template-columns: 'minmax(0,1fr)'}]
+  custom_fields:
+    body: [{white-space: normal}, {overflow: visible}]
+extra_styles: |
+  .tl { position:relative; padding:15px 18px; text-align:left; }
+  .tl-head { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .tl-title { font-size:18px; font-weight:650; color:var(--primary-text-color); }
+  .tl-leg { font-size:12px; color:var(--secondary-text-color); display:flex; align-items:center; gap:6px; }
+  .tl-leg i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-left:6px; }
+  .tl-row { display:grid; grid-template-columns:110px minmax(0,1fr); column-gap:12px; align-items:center; margin:8px 0; }
+  .tl-name { font-size:13px; font-weight:650; color:var(--primary-text-color); display:flex; flex-direction:column; }
+  .tl-name small { font-weight:400; font-size:11px; color:var(--secondary-text-color); }
+  .tl-name b.te { color:#3aa67a; } .tl-name b.ti { color:#e6814c; }
+  .tl-bar { display:grid; grid-template-columns:repeat(96, minmax(0,1fr)); gap:1px; height:20px; pointer-events:auto; cursor:crosshair; touch-action:pan-y; }
+  .tl-bar span { background:var(--divider-color); border-radius:1px; }
+  .tl-bar span:nth-child(4n+1) { margin-left:1px; }
+  .tl-bar span.hov { outline:2px solid var(--primary-text-color); position:relative; z-index:1; }
+  .e { background:#3aa67a !important; } .i { background:#e6814c !important; } .b { background:#d9b23b !important; } .a { background:#7b8794 !important; }
+  .tl-none { font-size:12px; color:var(--secondary-text-color); }
+  .tl-ticks { position:relative; height:14px; font-size:10px; color:var(--secondary-text-color); }
+  .tl-ticks span { position:absolute; transform:translateX(-50%); font-variant-numeric:tabular-nums; }
+  .tl-tip { display:none; position:absolute; transform:translateX(-50%); z-index:5; pointer-events:none; white-space:nowrap;
+    background:var(--card-background-color); color:var(--primary-text-color); border:1px solid var(--divider-color);
+    box-shadow:0 2px 8px rgba(0,0,0,.18); border-radius:8px; padding:4px 8px; font-size:12px; font-variant-numeric:tabular-nums; }
+  @media (max-width:600px) { .tl-row { grid-template-columns:minmax(0,1fr); } .tl-axis > div:first-child { display:none; } }
+custom_fields:
+  body: |
+    [[[
+    const Q = 900, N = 96;
+    const end = Math.floor(Date.now() / 1000 / Q) * Q + Q;
+    const start = end - N * Q;
+    const tf = new Intl.DateTimeFormat('nl-NL', {timeZone: 'Europe/Amsterdam', hour: '2-digit', minute: '2-digit'});
+    const t = s => tf.format(s * 1000);
+    const label = d => d === 'ie' ? 'export + import' : d === 'e' ? 'export' : d === 'i' ? 'import' : 'aFRR';
+    const cls = d => d === 'ie' ? 'b' : d === 'e' ? 'e' : d === 'i' ? 'i' : 'a';
+    const rows = Object.values(states)
+      .filter(s => s.entity_id.startsWith('sensor.pool_afrr_') && Array.isArray(s.attributes.kwartieren))
+      .map(s => {
+        const map = new Map(s.attributes.kwartieren.map(r => [r[0], r[1]]));
+        const cells = Array.from({length: N}, (_, k) => { const q = start + k * Q; return {q, d: map.has(q) ? map.get(q) : null}; });
+        const own = s.entity_id === 'sensor.pool_afrr_eigen_afrr';
+        return {name: own ? 'Jij' : (s.attributes.friendly_name || '').replace(/^Pool aFRR\s*/, ''), own, now: s.state,
+          cells, n: cells.filter(c => c.d !== null).length};
+      })
+      .sort((a, b) => (b.own - a.own) || a.name.localeCompare(b.name));
+    const tip = ev => {
+      const root = ev.currentTarget.closest('.tl'); const box = root && root.querySelector('.tl-tip'); if (!box) return;
+      const cell = ev.type === 'pointerleave' ? null : ev.target.closest('span[data-tip]');
+      root.querySelectorAll('.tl-bar span.hov').forEach(x => x.classList.remove('hov'));
+      if (!cell) { this._poolTip = null; box.style.display = 'none'; return; }
+      cell.classList.add('hov');
+      const name = cell.parentElement.dataset.name, text = cell.dataset.tip;
+      box.innerHTML = '<b>' + name + '</b> · ' + text;
+      const rr = root.getBoundingClientRect(), cr = cell.getBoundingClientRect();
+      box.style.display = 'block';
+      const x = Math.max(box.offsetWidth / 2 + 4, Math.min(rr.width - box.offsetWidth / 2 - 4, cr.left + cr.width / 2 - rr.left));
+      const y = cr.top - rr.top - box.offsetHeight - 6;
+      box.style.left = x + 'px'; box.style.top = y + 'px';
+      this._poolTip = {name, text, k: Array.prototype.indexOf.call(cell.parentElement.children, cell), x, y};
+    };
+    const st = this._poolTip;
+    const ticks = Array.from({length: N}, (_, k) => ({k, q: start + k * Q})).filter(x => x.q % 10800 === 0);
+    return html`
+    <div class="tl">
+      <div class="tl-tip" style="display:${st ? 'block' : 'none'};left:${st ? st.x : 0}px;top:${st ? st.y : 0}px">${st ? html`<b>${st.name}</b> · ${st.text}` : ''}</div>
+      <div class="tl-head"><span class="tl-title">Pool-aFRR · laatste 24 uur</span>
+        <span class="tl-leg"><i class="e"></i>export <i class="i"></i>import <i class="b"></i>beide</span></div>
+      ${rows.length ? rows.map(r => html`
+        <div class="tl-row">
+          <div class="tl-name">${r.name}<small>${r.n} kw${r.now !== 'geen' ? html` · <b class="${r.now === 'export' ? 'te' : 'ti'}">nu ${r.now}</b>` : ''}</small></div>
+          <div class="tl-bar" data-name="${r.name}" @pointermove=${tip} @pointerdown=${tip} @pointerleave=${tip}>${r.cells.map((c, k) => html`<span class="${c.d === null ? '' : cls(c.d)}${st && st.name === r.name && st.k === k ? ' hov' : ''}" data-tip="${t(c.q)}–${t(c.q + Q)} · ${c.d === null ? 'geen aFRR' : label(c.d)}"></span>`)}</div>
+        </div>`) : html`<div class="tl-none">Nog geen geschiedenis.</div>`}
+      <div class="tl-row tl-axis"><div></div><div class="tl-ticks">${ticks.map(x => html`<span style="left:${x.k / N * 100}%">${t(x.q)}</span>`)}</div></div>
+    </div>`;
+    ]]]
+```
+
+### Eenvoudige kaart zonder extra’s (per uur)
 Markdown-kaart (🟩 export · 🟧 import · 🟨 beide · 🟦 aFRR zonder richting · ⬜ niets), oudste uur links:
 
 ```yaml
