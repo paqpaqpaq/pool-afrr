@@ -100,7 +100,7 @@ class PoolOwn(PoolEntity):
 
     @property
     def extra_state_attributes(self):
-        return history_attrs(self.hub.history_list(), self.hub.soc_now, self.hub.soc_list(), self.hub.soc_list(self.hub.soc_end), self.hub.energy_list(), self.hub.start_list())
+        return {**history_attrs(self.hub.history_list(), self.hub.soc_now, self.hub.soc_list(), self.hub.soc_list(self.hub.soc_end), self.hub.energy_list(), self.hub.start_list()), "gebied": self.hub.area}
 
 
 class PoolStatus(PoolEntity):
@@ -138,7 +138,7 @@ class PoolMember(PoolEntity):
     def extra_state_attributes(self):
         soc, socs, ends = self.hub.soc_of(self._member)
         energy, starts = self.hub.extra_of(self._member)
-        return history_attrs(self.hub.history_of(self._member), soc, socs, ends, energy, starts)
+        return {**history_attrs(self.hub.history_of(self._member), soc, socs, ends, energy, starts), "gebied": self.hub.area_of(self._member)}
 
     @property
     def icon(self):

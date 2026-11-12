@@ -7,7 +7,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
 from .balans import BalansClient
-from .const import CONF_BE_PASSWORD, CONF_BE_USERNAME, CONF_HOST, CONF_NAME, CONF_POOL_CODE, CONF_SOC, DOMAIN
+from .const import CONF_BE_PASSWORD, CONF_BE_USERNAME, CONF_HOST, CONF_NAME, CONF_POOL_CODE, CONF_SOC, CONF_AREA, DOMAIN
 from .pool import PoolHub
 
 PLATFORMS = [Platform.SENSOR]
@@ -17,6 +17,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     balans = BalansClient(entry.data[CONF_BE_USERNAME], entry.data[CONF_BE_PASSWORD])
     hub = PoolHub(hass, entry.entry_id, entry.data[CONF_HOST], entry.data[CONF_NAME], entry.data[CONF_POOL_CODE], balans)
     hub.soc_entity = entry.options.get(CONF_SOC) or entry.data.get(CONF_SOC)
+    hub.area = str(entry.options.get(CONF_AREA, entry.data.get(CONF_AREA)) or "").strip()[:40]
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = hub
     await hub.async_start()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

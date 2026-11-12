@@ -14,7 +14,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.selector import EntitySelector, EntitySelectorConfig, TextSelector, TextSelectorConfig, TextSelectorType
 
 from .balans import BalansAuthError, BalansClient, BalansConnectionError
-from .const import BROKER_PORT, CONF_BE_PASSWORD, CONF_BE_USERNAME, CONF_HOST, CONF_NAME, CONF_POOL_CODE, CONF_SOC, DOMAIN
+from .const import BROKER_PORT, CONF_BE_PASSWORD, CONF_BE_USERNAME, CONF_HOST, CONF_NAME, CONF_POOL_CODE, CONF_SOC, CONF_AREA, DOMAIN
 
 SCHEMA = vol.Schema(
     {
@@ -23,6 +23,7 @@ SCHEMA = vol.Schema(
         vol.Required(CONF_BE_PASSWORD): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
         vol.Required(CONF_NAME): TextSelector(),
         vol.Required(CONF_POOL_CODE): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+        vol.Optional(CONF_AREA): TextSelector(),
         vol.Optional(CONF_SOC): EntitySelector(EntitySelectorConfig(domain="sensor")),
     }
 )
@@ -94,11 +95,18 @@ class PoolAfrrConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class PoolOptionsFlow(config_entries.OptionsFlow):
-    """Later instellen welke SOC-sensor wordt gedeeld."""
+    """Later instellen: gebied en reserve-SOC-sensor."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
+            if CONF_AREA in user_input:
+                user_input[CONF_AREA] = user_input[CONF_AREA].strip()[:40]
             return self.async_create_entry(title="", data=user_input)
-        current = self.config_entry.options.get(CONF_SOC) or self.config_entry.data.get(CONF_SOC)
-        schema = vol.Schema({vol.Optional(CONF_SOC, description={"suggested_value": current}): EntitySelector(EntitySelectorConfig(domain="sensor"))})
+        opts, data = self.config_entry.options, self.config_entry.data
+        current = opts.get(CONF_SOC) or data.get(CONF_SOC)
+        area = opts.get(CONF_AREA, data.get(CONF_AREA))
+        schema = vol.Schema({
+            vol.Optional(CONF_AREA, description={"suggested_value": area}): TextSelector(),
+            vol.Optional(CONF_SOC, description={"suggested_value": current}): EntitySelector(EntitySelectorConfig(domain="sensor")),
+        })
         return self.async_show_form(step_id="init", data_schema=schema)

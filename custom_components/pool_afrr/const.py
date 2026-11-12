@@ -12,6 +12,7 @@ CONF_BE_PASSWORD = "be_password"
 CONF_NAME = "name"
 CONF_POOL_CODE = "pool_code"
 CONF_SOC = "soc_sensor"
+CONF_AREA = "gebied"
 STALE_OFFLINE_SECONDS = 6 * 3600
 
 POLL_SECONDS = 10

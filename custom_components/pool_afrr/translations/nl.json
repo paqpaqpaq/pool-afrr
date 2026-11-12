@@ -10,7 +10,11 @@
           "be_password": "Balans wachtwoord",
           "name": "Je naam in de pool",
           "pool_code": "Poolcode",
-          "soc_sensor": "Reserve-SOC-sensor (optioneel, SOC komt uit het BE-dashboard)"
+          "soc_sensor": "Reserve-SOC-sensor (optioneel, SOC komt uit het BE-dashboard)",
+          "gebied": "Gebied (optioneel), bijv. OS Vaassen"
+        },
+        "data_description": {
+          "gebied": "Je TenneT-voedingsgebied of TenneT-gebied (Netcapaciteitskaart van TenneT). Wordt met de pool gedeeld om te zien of activaties per gebied verschillen."
         }
       }
     },
@@ -55,7 +59,11 @@
         "title": "Pool aFRR",
         "description": "De SOC komt automatisch uit je BE-dashboard. Kies hier alleen een reserve-sensor voor als het dashboard geen SOC geeft.",
         "data": {
-          "soc_sensor": "Reserve-SOC-sensor"
+          "soc_sensor": "Reserve-SOC-sensor",
+          "gebied": "Gebied (optioneel), bijv. OS Vaassen"
+        },
+        "data_description": {
+          "gebied": "Je TenneT-voedingsgebied of TenneT-gebied (Netcapaciteitskaart van TenneT). Wordt met de pool gedeeld om te zien of activaties per gebied verschillen."
         }
       }
     }

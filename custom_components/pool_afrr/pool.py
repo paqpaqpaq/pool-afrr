@@ -109,6 +109,7 @@ class PoolHub:
         self._unsub_hist = None
         self.log: dict[int, str] = {}
         self.soc_entity: str | None = None
+        self.area = ""  # optioneel TenneT-(voedings)gebied, door de deelnemer zelf ingevuld
         self.soc_now: int | None = None
         self.soc_log: dict[int, int] = {}  # SOC bij de start van het kwartier
         self.soc_end: dict[int, int] = {}  # SOC aan het eind van het kwartier
@@ -183,6 +184,7 @@ class PoolHub:
             "he": clean_soc(data.get("he")) if "he" in data else None,
             "hq": clean_pairs(data.get("hq"), 0, 1000) if "hq" in data else None,
             "hf": clean_pairs(data.get("hf"), 0, 900) if "hf" in data else None,
+            "g": str(data["g"]).strip()[:40] if isinstance(data.get("g"), str) else None,
         }
         self.hass.loop.call_soon_threadsafe(self._set_member, name, record)
 
@@ -211,6 +213,8 @@ class PoolHub:
         for key in ("hq", "hf"):
             if record[key] is None:
                 record[key] = old.get(key) or {}
+        if record["g"] is None:
+            record["g"] = old.get("g") or ""
         self.members[name] = record
         self._notify()
 
@@ -418,7 +422,7 @@ class PoolHub:
             beat = self.own != "" and now - self._last_sent_t >= HEARTBEAT_SECONDS
             if changed or beat:
                 payload = {"n": self.name, "r": self.own, "on": self.own != "", "q": (int(now) // 900) * 900, "t": int(now), "h": history,
-                           "soc": self.soc_now, "hs": socs, "he": ends, "hq": energy, "hf": starts}
+                           "soc": self.soc_now, "hs": socs, "he": ends, "hq": energy, "hf": starts, "g": self.area}
                 info = self._client.publish(TOPIC_PREFIX + self.name, json.dumps(payload, separators=(",", ":")), qos=1, retain=True)
                 if info.rc == 0:
                     self._last_sent = self.own
@@ -442,6 +446,9 @@ class PoolHub:
         ends = member.get("he") or {}
         return (member.get("soc"), [[start, log[start]] for start in sorted(log)],
                 [[start, ends[start]] for start in sorted(ends)])
+
+    def area_of(self, name: str) -> str:
+        return (self.members.get(name) or {}).get("g") or ""
 
     def extra_of(self, name: str):
         member = self.members.get(name) or {}
