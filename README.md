@@ -23,7 +23,7 @@ De integratie leest je accu-SOC uit je eigen Balans Energie-dashboard, met terug
 Je hoeft niets in te stellen. Via **Configureren** kun je optioneel een reserve-SOC-sensor kiezen; die wordt alleen gebruikt als het dashboard 20 minuten geen SOC geeft.
 
 ## Gebied (optioneel)
-Via **Configureren** kun je je TenneT-gebied invullen, bijvoorbeeld het voedingsgebied (`OS Vaassen`) of grover het TenneT-gebied. Je vindt het op de Netcapaciteitskaart van TenneT: op de kaart van de regionale netbeheerder je gemeente aanklikken, het voedingsgebied staat rechtsboven. Het wordt met de pool gedeeld (attribuut `gebied`) en onder je naam in de tijdlijn getoond. Zo kunnen we zien of leden in hetzelfde gebied vaker tegelijk en in dezelfde richting worden geactiveerd. Leeg laten mag; het geeft een grove indicatie van waar je woont.
+Via **Configureren** kun je je TenneT-gebied invullen, bijvoorbeeld het voedingsgebied (`OS Vaassen`) of grover het TenneT-gebied. Je vindt het op de Netcapaciteitskaart van TenneT: op de kaart van de regionale netbeheerder je gemeente aanklikken, het voedingsgebied staat rechtsboven. Het wordt met de pool gedeeld (attribuut `gebied`) en getoond in de kaart **Pool-analyse** ([`cards/pool-analyse.yaml`](cards/pool-analyse.yaml)). Die laat per lid gebied, aFRR-kwartieren en kWh van de laatste 24 uur zien, en per paar leden hoe vaak ze samen (zelfde kwartier en richting) of tegengesteld werden geactiveerd, met het gemiddelde voor zelfde en ander gebied. Zo kunnen we zien of leden in hetzelfde gebied vaker tegelijk en in dezelfde richting worden geactiveerd. Leeg laten mag; het geeft een grove indicatie van waar je woont.
 
 ## Hoeveel en wanneer (uit het BE-dashboard)
 Een aFRR-vlag zegt alleen dát er in een kwartier aFRR was, niet hoeveel. Daarom deelt elke deelnemer per aFRR-kwartier ook:
@@ -106,7 +106,7 @@ custom_fields:
         let run = null;  // aaneengesloten aFRR-blok: SOC bij de start onthouden
         for (const c of cells) { if (c.d === null) { run = null; continue; } if (!run || run.d !== c.d) run = {from: c.q, d: c.d, soc: c.soc}; c.b = run; }
         const own = s.entity_id === 'sensor.pool_afrr_eigen_afrr';
-        return {name: own ? 'Jij' : (s.attributes.friendly_name || '').replace(/^Pool aFRR\s*/, ''), own, now: s.state, soc: s.attributes.soc, area: s.attributes.gebied || '', cells};
+        return {name: own ? 'Jij' : (s.attributes.friendly_name || '').replace(/^Pool aFRR\s*/, ''), own, now: s.state, soc: s.attributes.soc, cells};
       })
       .sort((a, b) => (b.own - a.own) || a.name.localeCompare(b.name));
     const tip = ev => {
@@ -133,7 +133,7 @@ custom_fields:
         <span class="tl-leg"><i class="e"></i>export <i class="i"></i>import <i class="b"></i>beide</span></div>
       ${rows.length ? rows.map(r => html`
         <div class="tl-row">
-          <div class="tl-name">${r.name}<small>${[Number.isFinite(r.soc) ? 'SOC ' + r.soc + '%' : '', r.area, r.now !== 'geen' ? html`<b class="${r.now === 'export' ? 'te' : 'ti'}">nu ${r.now}</b>` : ''].filter(v => v).map((v, i) => i ? html` · ${v}` : v)}</small></div>
+          <div class="tl-name">${r.name}<small>${[Number.isFinite(r.soc) ? 'SOC ' + r.soc + '%' : '', r.now !== 'geen' ? html`<b class="${r.now === 'export' ? 'te' : 'ti'}">nu ${r.now}</b>` : ''].filter(v => v).map((v, i) => i ? html` · ${v}` : v)}</small></div>
           <div class="tl-bar" data-name="${r.name}" @pointermove=${tip} @pointerdown=${tip} @pointerleave=${tip}>${r.cells.map((c, k) => html`<span class="${c.d === null ? '' : cls(c.d)}${st && st.name === r.name && st.k === k ? ' hov' : ''}" data-tip="${t(c.q)}–${t(c.q + Q)} · ${c.d === null ? 'geen aFRR' : label(c.d) + extra(c)}${c.b ? (Number.isFinite(c.b.soc) ? ' · gestart ' + t(c.b.from) + ' bij SOC ' + c.b.soc + '%' : '') + (Number.isFinite(c.soc) ? ' · dit kwartier ' + c.soc + (Number.isFinite(c.soce) && c.soce !== c.soc ? '→' + c.soce : '') + '%' : '') : (Number.isFinite(c.soc) ? ' · SOC ' + c.soc + '%' : '')}"></span>`)}</div>
         </div>`) : html`<div class="tl-none">Nog geen geschiedenis.</div>`}
       <div class="tl-row tl-axis"><div></div><div class="tl-ticks">${ticks.map(x => html`<span style="left:${x.k / N * 100}%">${t(x.q)}</span>`)}</div></div>

@@ -1,0 +1,119 @@
+# Pool-analyse: per lid gebied, aFRR-kwartieren en kWh (24 uur) en hoe vaak leden samen worden geactiveerd.
+# Vereist button-card. Dashboard bewerken -> kaart toevoegen -> Handmatig -> plak dit.
+type: custom:button-card
+triggers_update: all
+show_name: false
+show_icon: false
+show_state: false
+tap_action:
+  action: none
+hold_action:
+  action: none
+styles:
+  card:
+  - padding: 0
+  - border-radius: 16px
+  - cursor: default
+  grid:
+  - grid-template-areas: '"body"'
+  - grid-template-columns: minmax(0,1fr)
+  custom_fields:
+    body:
+    - white-space: normal
+    - overflow: visible
+extra_styles: |
+  .pa { padding:15px 18px; text-align:left; }
+  .pa-head { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+  .pa-title { font-size:18px; font-weight:650; color:var(--primary-text-color); }
+  .pa-sub { font-size:12px; color:var(--secondary-text-color); }
+  .pa-tab { width:100%; border-collapse:collapse; font-size:13px; color:var(--primary-text-color); }
+  .pa-tab th { text-align:left; font-size:11px; font-weight:600; color:var(--secondary-text-color); padding:4px 6px; border-bottom:1px solid var(--divider-color); }
+  .pa-tab td { padding:5px 6px; border-bottom:1px solid var(--divider-color); font-variant-numeric:tabular-nums; }
+  .pa-tab .n { text-align:right; white-space:nowrap; }
+  .pa-tab .area i { color:var(--secondary-text-color); font-style:normal; opacity:.7; }
+  .pa-tab b.te { color:#3aa67a; } .pa-tab b.ti { color:#e6814c; }
+  .pa-sec { margin:14px 0 6px; font-size:12px; font-weight:650; color:var(--secondary-text-color); }
+  .pa-mx { display:grid; gap:2px; font-size:11px; font-variant-numeric:tabular-nums; }
+  .pa-mx span { padding:4px 2px; text-align:center; border-radius:3px; color:var(--primary-text-color); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .pa-mx .h { color:var(--secondary-text-color); font-weight:600; }
+  .pa-mx .h.r { text-align:left; }
+  .pa-mx .d { background:var(--divider-color); opacity:.4; }
+  .pa-mx .c small { display:block; font-size:9px; color:#e6814c; }
+  .pa-foot { margin-top:10px; font-size:12px; color:var(--secondary-text-color); line-height:1.4; }
+  @media (max-width:600px) { .pa-mx { font-size:9px; } }
+custom_fields:
+  body: |
+    [[[
+    const Q = 900;
+    const from = Math.floor(Date.now() / 1000 / Q) * Q - 96 * Q;
+    const nl = (v, d = 0) => Number(v).toLocaleString('nl-NL', {minimumFractionDigits: d, maximumFractionDigits: d});
+    const mem = Object.values(states)
+      .filter(s => s.entity_id.startsWith('sensor.pool_afrr_') && Array.isArray(s.attributes.kwartieren) && !s.entity_id.includes('be_flag_test'))
+      .map(s => {
+        const own = s.entity_id === 'sensor.pool_afrr_eigen_afrr';
+        const k = new Map(s.attributes.kwartieren.filter(r => r[0] >= from).map(r => [r[0], r[1] || '']));
+        const en = (s.attributes.energie_kwartieren || []).filter(r => r[0] >= from);
+        const dirs = [...k.values()];
+        return {
+          name: own ? 'Jij' : (s.attributes.friendly_name || '').replace(/^Pool aFRR\s*/, ''), own,
+          area: (s.attributes.gebied || '').trim(), k,
+          e: dirs.filter(d => d.includes('e')).length, i: dirs.filter(d => d.includes('i')).length,
+          ke: en.reduce((a, r) => a + (Number(r[1]) || 0), 0), ki: en.reduce((a, r) => a + (Number(r[2]) || 0), 0),
+          hasEn: en.length > 0,
+        };
+      })
+      .sort((a, b) => (b.own - a.own) || a.name.localeCompare(b.name));
+    // Samen geactiveerd: kwartier+richting die beide hadden, gedeeld door alle kwartier+richtingen van een van beide.
+    const tokens = m => new Set([...m.k].flatMap(([q, d]) => [...d].map(c => q + c)));
+    const T = mem.map(tokens);
+    const overlap = (a, b) => {
+      let inter = 0;
+      T[a].forEach(x => { if (T[b].has(x)) inter++; });
+      const uni = T[a].size + T[b].size - inter;
+      return uni ? inter / uni : null;
+    };
+    // Tegengesteld: zelfde kwartier, alleen de andere richting.
+    const opposite = (a, b) => {
+      let n = 0;
+      mem[a].k.forEach((d, q) => { const e = mem[b].k.get(q); if (d && e && ![...d].some(c => e.includes(c))) n++; });
+      return n;
+    };
+    const pairs = [];
+    for (let a = 0; a < mem.length; a++) for (let b = a + 1; b < mem.length; b++) {
+      pairs.push({a, b, o: overlap(a, b), x: opposite(a, b), same: mem[a].area && mem[b].area ? mem[a].area.toLowerCase() === mem[b].area.toLowerCase() : null});
+    }
+    const avg = list => { const v = list.map(p => p.o).filter(Number.isFinite); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+    const same = pairs.filter(p => p.same === true), diff = pairs.filter(p => p.same === false);
+    const withArea = mem.filter(m => m.area).length;
+    const pct = v => Number.isFinite(v) ? nl(100 * v) + '%' : '—';
+    const cell = v => Number.isFinite(v) ? `background:rgba(58,166,122,${(0.08 + 0.8 * v).toFixed(2)})` : '';
+    const P = (a, b) => pairs.find(p => (p.a === a && p.b === b) || (p.a === b && p.b === a));
+    const short = n => n.length > 7 ? n.slice(0, 6) + '…' : n;
+    return html`
+    <div class="pa">
+      <div class="pa-head"><span class="pa-title">Pool-analyse · laatste 24 uur</span>
+        <span class="pa-sub">${mem.length} leden · ${withArea} met gebied</span></div>
+      <table class="pa-tab">
+        <thead><tr><th>Lid</th><th>Gebied</th><th class="n">Export</th><th class="n">Import</th></tr></thead>
+        <tbody>${mem.map(m => html`<tr>
+          <td>${m.name}</td><td class="area">${m.area || html`<i>niet ingevuld</i>`}</td>
+          <td class="n"><b class="te">${m.e}</b> kw${m.hasEn ? ' · ' + nl(m.ke, 1) + ' kWh' : ''}</td>
+          <td class="n"><b class="ti">${m.i}</b> kw${m.hasEn ? ' · ' + nl(m.ki, 1) + ' kWh' : ''}</td></tr>`)}</tbody>
+      </table>
+      <div class="pa-sec">Samen geactiveerd (zelfde kwartier én richting)</div>
+      <div class="pa-mx" style="grid-template-columns:90px repeat(${mem.length}, minmax(0,1fr))">
+        <span></span>${mem.map(m => html`<span class="h" title=${m.name}>${short(m.name)}</span>`)}
+        ${mem.map((m, a) => html`<span class="h r" title=${m.area || ''}>${m.name}</span>${mem.map((n, b) => {
+          if (a === b) return html`<span class="d"></span>`;
+          const p = P(a, b);
+          return html`<span class="c" style=${cell(p.o)} title=${`${m.name} & ${n.name}: ${pct(p.o)} samen, ${p.x} kwartier(en) tegengesteld${p.same === true ? ' · zelfde gebied' : p.same === false ? ' · ander gebied' : ''}`}>${pct(p.o)}${p.x ? html`<small>${p.x}↔</small>` : ''}</span>`;
+        })}`)}
+      </div>
+      <div class="pa-foot">
+        ${same.length || diff.length
+          ? html`Zelfde gebied: gemiddeld <b>${pct(avg(same))}</b> samen (${same.length} paren) · ander gebied: <b>${pct(avg(diff))}</b> (${diff.length} paren)`
+          : html`Nog te weinig leden met een gebied om te vergelijken. Vul het gebied in via Pool aFRR → Configureren.`}
+        <br><small>↔ = kwartieren waarin de één exporteerde en de ander importeerde.</small>
+      </div>
+    </div>`;
+    ]]]
