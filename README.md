@@ -22,6 +22,15 @@ De integratie leest je accu-SOC uit je eigen Balans Energie-dashboard, met terug
 
 Je hoeft niets in te stellen. Via **Configureren** kun je optioneel een reserve-SOC-sensor kiezen; die wordt alleen gebruikt als het dashboard 20 minuten geen SOC geeft.
 
+## Hoeveel en wanneer (uit het BE-dashboard)
+Een aFRR-vlag zegt alleen dát er in een kwartier aFRR was, niet hoeveel. Daarom deelt elke deelnemer per aFRR-kwartier ook:
+- `energie_kwartieren`: netto export en import in kWh volgens het BE-dashboard (`[[start, export_kWh, import_kWh], ...]`). Het lopende en vorige kwartier worden elke minuut op 10-secondenresolutie bijgewerkt; oudere kwartieren komen met terugwerkende kracht mee (grover, tot ~25 uur).
+- `vlag_start`: wanneer in het kwartier de export- of importvlag begon (`[[start, seconden_tot_export, seconden_tot_import], ...]`). Dit wordt live bijgehouden en is dus niet met terugwerkende kracht beschikbaar.
+
+De tooltip toont dat als bijvoorbeeld `09:00–09:15 · export · export vanaf 09:00 · net export 0,20 kWh`. Zo zie je het verschil tussen een piepje en echte aFRR.
+
+Netto betekent: wat er aan de meter het net op of af ging, inclusief huisverbruik en eventuele eigen regelacties.
+
 ## Geschiedenis (met terugwerkende kracht)
 Elke deelnemer haalt bij Balans zijn eigen aFRR-kwartieren van de afgelopen ~26 uur op en deelt die met de pool. Je ziet dus meteen de activaties van iedereen, ook van vóór je meedeed (tot 48 uur bewaard zolang de anderen verbonden zijn).
 
@@ -77,6 +86,9 @@ custom_fields:
     const start = end - N * Q;
     const tf = new Intl.DateTimeFormat('nl-NL', {timeZone: 'Europe/Amsterdam', hour: '2-digit', minute: '2-digit'});
     const t = s => tf.format(s * 1000);
+    const kwh = v => v.toLocaleString('nl-NL', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' kWh';
+    const extra = c => (c.f ? [Number.isFinite(c.f[1]) ? 'export vanaf ' + t(c.q + c.f[1]) : '', Number.isFinite(c.f[2]) ? 'import vanaf ' + t(c.q + c.f[2]) : ''].filter(x => x).map(x => ' · ' + x).join('') : '')
+      + (c.e ? ' · net ' + ([Number.isFinite(c.e[1]) && c.e[1] >= 0.005 ? 'export ' + kwh(c.e[1]) : '', Number.isFinite(c.e[2]) && c.e[2] >= 0.005 ? 'import ' + kwh(c.e[2]) : ''].filter(x => x).join(' / ') || '0,00 kWh') : '');
     const label = d => d === 'ie' ? 'export + import' : d === 'e' ? 'export' : d === 'i' ? 'import' : 'aFRR';
     const cls = d => d === 'ie' ? 'b' : d === 'e' ? 'e' : d === 'i' ? 'i' : 'a';
     const rows = Object.values(states)
@@ -85,7 +97,9 @@ custom_fields:
         const map = new Map(s.attributes.kwartieren.map(r => [r[0], r[1]]));
         const socs = new Map((s.attributes.soc_kwartieren || []).map(r => [r[0], r[1]]));
         const ends = new Map((s.attributes.soc_kwartier_eind || []).map(r => [r[0], r[1]]));
-        const cells = Array.from({length: N}, (_, k) => { const q = start + k * Q; return {q, d: map.has(q) ? map.get(q) : null, soc: socs.get(q), soce: ends.get(q)}; });
+        const en = new Map((s.attributes.energie_kwartieren || []).map(r => [r[0], r]));
+        const fs = new Map((s.attributes.vlag_start || []).map(r => [r[0], r]));
+        const cells = Array.from({length: N}, (_, k) => { const q = start + k * Q; return {q, d: map.has(q) ? map.get(q) : null, soc: socs.get(q), soce: ends.get(q), e: en.get(q), f: fs.get(q)}; });
         let run = null;  // aaneengesloten aFRR-blok: SOC bij de start onthouden
         for (const c of cells) { if (c.d === null) { run = null; continue; } if (!run || run.d !== c.d) run = {from: c.q, d: c.d, soc: c.soc}; c.b = run; }
         const own = s.entity_id === 'sensor.pool_afrr_eigen_afrr';
@@ -117,7 +131,7 @@ custom_fields:
       ${rows.length ? rows.map(r => html`
         <div class="tl-row">
           <div class="tl-name">${r.name}<small>${[Number.isFinite(r.soc) ? 'SOC ' + r.soc + '%' : '', r.now !== 'geen' ? html`<b class="${r.now === 'export' ? 'te' : 'ti'}">nu ${r.now}</b>` : ''].filter(v => v).map((v, i) => i ? html` · ${v}` : v)}</small></div>
-          <div class="tl-bar" data-name="${r.name}" @pointermove=${tip} @pointerdown=${tip} @pointerleave=${tip}>${r.cells.map((c, k) => html`<span class="${c.d === null ? '' : cls(c.d)}${st && st.name === r.name && st.k === k ? ' hov' : ''}" data-tip="${t(c.q)}–${t(c.q + Q)} · ${c.d === null ? 'geen aFRR' : label(c.d)}${c.b ? (Number.isFinite(c.b.soc) ? ' · gestart ' + t(c.b.from) + ' bij SOC ' + c.b.soc + '%' : '') + (Number.isFinite(c.soc) ? ' · dit kwartier ' + c.soc + (Number.isFinite(c.soce) && c.soce !== c.soc ? '→' + c.soce : '') + '%' : '') : (Number.isFinite(c.soc) ? ' · SOC ' + c.soc + '%' : '')}"></span>`)}</div>
+          <div class="tl-bar" data-name="${r.name}" @pointermove=${tip} @pointerdown=${tip} @pointerleave=${tip}>${r.cells.map((c, k) => html`<span class="${c.d === null ? '' : cls(c.d)}${st && st.name === r.name && st.k === k ? ' hov' : ''}" data-tip="${t(c.q)}–${t(c.q + Q)} · ${c.d === null ? 'geen aFRR' : label(c.d) + extra(c)}${c.b ? (Number.isFinite(c.b.soc) ? ' · gestart ' + t(c.b.from) + ' bij SOC ' + c.b.soc + '%' : '') + (Number.isFinite(c.soc) ? ' · dit kwartier ' + c.soc + (Number.isFinite(c.soce) && c.soce !== c.soc ? '→' + c.soce : '') + '%' : '') : (Number.isFinite(c.soc) ? ' · SOC ' + c.soc + '%' : '')}"></span>`)}</div>
         </div>`) : html`<div class="tl-none">Nog geen geschiedenis.</div>`}
       <div class="tl-row tl-axis"><div></div><div class="tl-ticks">${ticks.map(x => html`<span style="left:${x.k / N * 100}%">${t(x.q)}</span>`)}</div></div>
     </div>`;

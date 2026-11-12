@@ -102,7 +102,8 @@ class BalansClient:
         return out
 
     async def soc_history(self, hours: float) -> list[list]:
-        """SOC-metingen uit het BE-dashboard (Balans bewaart ~25 uur): [[t_s, soc], ...]."""
+        """Metingen uit het BE-dashboard (Balans bewaart ~25 uur): [[t_s, soc|None, net_W|None], ...].
+        Hoe korter het venster, hoe fijner de resolutie (1 uur: 10 s, 6 uur: 1 min, 25 uur: 5 min)."""
         try:
             return await self._soc_rows(hours)
         except BalansAuthError:
@@ -156,8 +157,12 @@ class BalansClient:
         rows = payload.get("rows") if isinstance(payload, dict) else None
         out = []
         for row in rows or []:
-            if isinstance(row, dict) and isinstance(row.get("t"), (int, float)) and isinstance(row.get("s"), (int, float)) and 0 <= row["s"] <= 100:
-                out.append([row["t"] / 1000, row["s"]])
+            if not isinstance(row, dict) or not isinstance(row.get("t"), (int, float)):
+                continue
+            soc = row.get("s") if isinstance(row.get("s"), (int, float)) and 0 <= row["s"] <= 100 else None
+            grid = row.get("po") if isinstance(row.get("po"), (int, float)) and -60000 <= row["po"] <= 60000 else None
+            if soc is not None or grid is not None:
+                out.append([row["t"] / 1000, soc, grid])  # grid: netvermogen in W, + import / - export
         out.sort()
         return out
 

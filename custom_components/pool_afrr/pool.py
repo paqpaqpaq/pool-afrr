@@ -58,6 +58,21 @@ def clean_soc(value) -> dict[int, int]:
     return out
 
 
+def clean_pairs(value, lo: float, hi: float) -> dict[int, tuple]:
+    """Lijst [[start_s, a, b], ...] naar dict {start: (a, b)} met getallen binnen [lo, hi] (anders None)."""
+    out: dict[int, tuple] = {}
+    if not isinstance(value, list):
+        return out
+    cutoff = time.time() - HISTORY_KEEP_SECONDS
+    num = lambda v: v if isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi else None  # noqa: E731
+    for item in value[:400]:
+        if isinstance(item, (list, tuple)) and len(item) == 3 and isinstance(item[0], (int, float)):
+            start = int(item[0]) // 900 * 900
+            if start >= cutoff:
+                out[start] = (num(item[1]), num(item[2]))
+    return out
+
+
 def dir_letters(direction: str) -> str:
     return {"export": "e", "import": "i"}.get(direction, "")
 
@@ -99,6 +114,10 @@ class PoolHub:
         self.soc_end: dict[int, int] = {}  # SOC aan het eind van het kwartier
         self.soc_t = 0.0  # laatste SOC-meting uit het BE-dashboard
         self._soc_full = False
+        self.energy: dict[int, list] = {}  # kwartier -> [export_kWh, import_kWh, resolutie_s, gedekt_s] (netto, BE-dashboard)
+        self.flag_start: dict[int, dict] = {}  # kwartier -> {"e": seconden na start, "i": ...}
+        self._energy_t = 0.0
+        self._energy_busy = False
         self._soc_off: dict[int, float] = {}
         self._soc_end_off: dict[int, float] = {}
         self._log_sent: tuple | None = None
@@ -162,6 +181,8 @@ class PoolHub:
             "soc": int(data["soc"]) if isinstance(data.get("soc"), (int, float)) and 0 <= data["soc"] <= 100 else None,
             "hs": clean_soc(data.get("hs")) if "hs" in data else None,
             "he": clean_soc(data.get("he")) if "he" in data else None,
+            "hq": clean_pairs(data.get("hq"), 0, 1000) if "hq" in data else None,
+            "hf": clean_pairs(data.get("hf"), 0, 900) if "hf" in data else None,
         }
         self.hass.loop.call_soon_threadsafe(self._set_member, name, record)
 
@@ -187,6 +208,9 @@ class PoolHub:
             record["hs"] = old.get("hs") or {}
         if record["he"] is None:
             record["he"] = old.get("he") or {}
+        for key in ("hq", "hf"):
+            if record[key] is None:
+                record[key] = old.get(key) or {}
         self.members[name] = record
         self._notify()
 
@@ -236,16 +260,20 @@ class PoolHub:
             for key in [k for k in log if k < cutoff]:
                 del log[key]
 
-    async def _balans_soc(self) -> None:
-        """SOC uit het BE-dashboard: eerst ~25 uur terug, daarna steeds het laatste uur."""
+    async def _balans_soc(self, hours: float | None = None) -> None:
+        """SOC en netvermogen uit het BE-dashboard: eerst ~25 uur terug, daarna steeds het laatste uur."""
         try:
-            rows = await self.balans.soc_history(1.5 if self._soc_full else 24.9)
+            rows = await self.balans.soc_history(hours or (1.5 if self._soc_full else 24.9))
         except (BalansAuthError, BalansConnectionError, asyncio.TimeoutError) as err:
             _LOGGER.debug("SOC uit BE-dashboard niet opgehaald: %s", err)
             return
         if not rows:
             return
         self._soc_full = True
+        self._energy_from(rows)
+        rows = [[t, soc] for t, soc, _grid in rows if soc is not None]
+        if not rows:
+            return
         for t, soc in rows:  # oplopend in tijd
             quarter = int(t) // 900 * 900
             value = int(round(soc))
@@ -263,6 +291,56 @@ class PoolHub:
         self._prune_soc(time.time())
         self._soc_off = {q: v for q, v in self._soc_off.items() if q in self.soc_log}
         self._soc_end_off = {q: v for q, v in self._soc_end_off.items() if q in self.soc_end}
+
+    def _energy_from(self, rows: list[list]) -> None:
+        """Netto export/import per kwartier uit het netvermogen (W) van het BE-dashboard. Fijnere data wint."""
+        pts = [(t, g) for t, _soc, g in rows if g is not None]
+        if len(pts) < 2:
+            return
+        steps = sorted(b[0] - a[0] for a, b in zip(pts, pts[1:]) if b[0] > a[0])
+        res = steps[len(steps) // 2] if steps else 300
+        cap = max(res * 2, 30)
+        acc: dict[int, list] = {}
+        for (t, g), (t2, _g2) in zip(pts, pts[1:]):
+            dt = min(t2 - t, cap)
+            while dt > 0:
+                q = int(t) // 900 * 900
+                part = min(dt, q + 900 - t)
+                a = acc.setdefault(q, [0.0, 0.0, 0.0])
+                wh = g * part / 3600
+                if wh < 0:
+                    a[0] -= wh
+                else:
+                    a[1] += wh
+                a[2] += part
+                t += part
+                dt -= part
+        first_q = int(pts[0][0]) // 900 * 900
+        for q, (exp_wh, imp_wh, cov) in acc.items():
+            old = self.energy.get(q)
+            if old and q == first_q and pts[0][0] - q > cap:
+                continue  # kwartier valt maar half in dit venster: oudere, volledige waarde houden
+            if old is None or res < old[2] - 1 or (abs(res - old[2]) <= 1 and cov >= old[3] - 1):
+                self.energy[q] = [round(exp_wh / 1000, 2), round(imp_wh / 1000, 2), res, cov]
+        cutoff = time.time() - HISTORY_KEEP_SECONDS
+        self.energy = {q: v for q, v in self.energy.items() if q >= cutoff}
+
+    async def _live_energy(self) -> None:
+        """Lopend en vorig kwartier elke minuut op 10-secondenresolutie bijwerken."""
+        if self._energy_busy:
+            return
+        self._energy_busy = True
+        try:
+            await self._balans_soc(0.4)
+        finally:
+            self._energy_busy = False
+
+    def energy_list(self) -> list[list]:
+        """Alleen kwartieren met een aFRR-vlag: [[start, export_kWh, import_kWh], ...]."""
+        return [[q, self.energy[q][0], self.energy[q][1]] for q in sorted(self.energy) if self.log.get(q) is not None]
+
+    def start_list(self) -> list[list]:
+        return [[q, self.flag_start[q].get("e"), self.flag_start[q].get("i")] for q in sorted(self.flag_start) if q in self.log]
 
     def _read_soc(self, now: float) -> None:
         """Reserve: HA-sensor gebruiken als het BE-dashboard al 20 minuten geen SOC gaf."""
@@ -318,18 +396,29 @@ class PoolHub:
             return
         now = time.time()
         self._read_soc(now)
+        quarter = int(now) // 900 * 900
         if self.own:
-            self.log[int(now) // 900 * 900] = dir_letters(self.own) or self.log.get(int(now) // 900 * 900, "")
+            self.log[quarter] = dir_letters(self.own) or self.log.get(quarter, "")
+            starts = self.flag_start.setdefault(quarter, {})
+            for letter in dir_letters(self.own):
+                starts.setdefault(letter, int(now - quarter))  # wanneer in het kwartier de vlag begon
+            cutoff = now - HISTORY_KEEP_SECONDS
+            self.flag_start = {q: v for q, v in self.flag_start.items() if q >= cutoff}
+        if now - self._energy_t >= 60:
+            self._energy_t = now
+            self.hass.async_create_task(self._live_energy())
         if self._client is not None and self.broker_status == "verbonden":
             history = self.history_list()
             socs = self.soc_list()
             ends = self.soc_list(self.soc_end)
-            soc_key = (self.soc_now, tuple(map(tuple, socs)), tuple(map(tuple, ends)))
+            energy = self.energy_list()
+            starts = self.start_list()
+            soc_key = (self.soc_now, tuple(map(tuple, socs)), tuple(map(tuple, ends)), tuple(map(tuple, energy)), tuple(map(tuple, starts)))
             changed = self.own != self._last_sent or tuple(map(tuple, history)) != self._log_sent or soc_key != self._soc_sent
             beat = self.own != "" and now - self._last_sent_t >= HEARTBEAT_SECONDS
             if changed or beat:
                 payload = {"n": self.name, "r": self.own, "on": self.own != "", "q": (int(now) // 900) * 900, "t": int(now), "h": history,
-                           "soc": self.soc_now, "hs": socs, "he": ends}
+                           "soc": self.soc_now, "hs": socs, "he": ends, "hq": energy, "hf": starts}
                 info = self._client.publish(TOPIC_PREFIX + self.name, json.dumps(payload, separators=(",", ":")), qos=1, retain=True)
                 if info.rc == 0:
                     self._last_sent = self.own
@@ -353,6 +442,11 @@ class PoolHub:
         ends = member.get("he") or {}
         return (member.get("soc"), [[start, log[start]] for start in sorted(log)],
                 [[start, ends[start]] for start in sorted(ends)])
+
+    def extra_of(self, name: str):
+        member = self.members.get(name) or {}
+        hq, hf = member.get("hq") or {}, member.get("hf") or {}
+        return [[q, *hq[q]] for q in sorted(hq)], [[q, *hf[q]] for q in sorted(hf)]
 
     def history_of(self, name: str) -> list[list]:
         member = self.members.get(name) or {}
