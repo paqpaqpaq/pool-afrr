@@ -42,7 +42,7 @@ Attributen op elke ledensensor en op **Eigen aFRR**:
 - `export_24u`, `import_24u`, `afrr_24u` – aantal kwartieren in de laatste 24 uur
 
 ### Kaart: laatste 24 uur per kwartier
-Vereist [button-card](https://github.com/custom-cards/button-card) (HACS). Per lid een balk van 96 kwartieren met tijdas; wijs (of tik) een kwartier aan voor tijd, richting en bij welke SOC het aFRR-blok begon.
+Vereist [button-card](https://github.com/custom-cards/button-card) (HACS). Per lid een balk van 96 kwartieren met tijdas; wijs (of tik) een kwartier aan voor tijd, richting en bij welke SOC het aFRR-blok begon. De blokjes vullen zich van onder naar het netto volume in dat kwartier (vol = 12 kW × 15 min = 3 kWh), omrand in de richtingskleur; met het knopje **volume** zet je dat per browser aan of uit.
 
 Dashboard bewerken → kaart toevoegen → **Handmatig** → plak:
 
@@ -73,7 +73,12 @@ extra_styles: |
   .tl-bar span { background:var(--divider-color); border-radius:1px; }
   .tl-bar span:nth-child(4n+1) { margin-left:1px; }
   .tl-bar span.hov { outline:2px solid var(--primary-text-color); position:relative; z-index:1; }
-  .e { background:#3aa67a !important; } .i { background:#e6814c !important; } .b { background:#d9b23b !important; } .a { background:#7b8794 !important; }
+  .e { background:#3aa67a !important; } .i { background:#e6814c !important; } .b { background:#d9b23b !important; }
+  .tl-vol { pointer-events:auto !important; cursor:pointer; user-select:none; margin-right:10px; padding:1px 8px; border-radius:10px; border:1px solid var(--divider-color); color:var(--secondary-text-color); }
+  .tl.vol .tl-vol { border-color:var(--primary-text-color); color:var(--primary-text-color); }
+  .tl.vol .tl-bar span.e { background:linear-gradient(to top, #3aa67a var(--fill, 100%), var(--divider-color) var(--fill, 100%)) !important; box-shadow:inset 0 0 0 1px #3aa67a; }
+  .tl.vol .tl-bar span.i { background:linear-gradient(to top, #e6814c var(--fill, 100%), var(--divider-color) var(--fill, 100%)) !important; box-shadow:inset 0 0 0 1px #e6814c; }
+  .tl.vol .tl-bar span.b { background:linear-gradient(to top, #d9b23b var(--fill, 100%), var(--divider-color) var(--fill, 100%)) !important; box-shadow:inset 0 0 0 1px #d9b23b; } .a { background:#7b8794 !important; }
   .tl-none { font-size:12px; color:var(--secondary-text-color); }
   .tl-ticks { position:relative; height:14px; font-size:10px; color:var(--secondary-text-color); }
   .tl-ticks span { position:absolute; transform:translateX(-50%); font-variant-numeric:tabular-nums; }
@@ -109,6 +114,9 @@ custom_fields:
         return {name: own ? 'Jij' : (s.attributes.friendly_name || '').replace(/^Pool aFRR\s*/, ''), own, now: s.state, soc: s.attributes.soc, cells};
       })
       .sort((a, b) => (b.own - a.own) || a.name.localeCompare(b.name));
+    const vol = (() => { try { return localStorage.getItem('pool_tl_vol') !== '0'; } catch (e) { return true; } })();
+    const volToggle = ev => { const root = ev.currentTarget.closest('.tl'); if (!root) return; const on = !root.classList.contains('vol'); root.classList.toggle('vol', on); try { localStorage.setItem('pool_tl_vol', on ? '1' : '0'); } catch (e) {} };
+    const fill = c => { if (!c.e || c.d === null) return 100; const k = c.d === 'e' ? c.e[1] : c.d === 'i' ? c.e[2] : (Number(c.e[1]) || 0) + (Number(c.e[2]) || 0); const v = Number(k); return Number.isFinite(v) ? Math.max(8, Math.min(100, Math.round(v / 3 * 100))) : 100; };
     const tip = ev => {
       const root = ev.currentTarget.closest('.tl'); const box = root && root.querySelector('.tl-tip'); if (!box) return;
       const cell = ev.type === 'pointerleave' ? null : ev.target.closest('span[data-tip]');
@@ -127,14 +135,14 @@ custom_fields:
     const st = this._poolTip;
     const ticks = Array.from({length: N}, (_, k) => ({k, q: start + k * Q})).filter(x => x.q % 10800 === 0);
     return html`
-    <div class="tl">
+    <div class="tl${vol ? ' vol' : ''}">
       <div class="tl-tip" style="display:${st ? 'block' : 'none'};left:${st ? st.x : 0}px;top:${st ? st.y : 0}px">${st ? html`<b>${st.name}</b> · ${st.text}` : ''}</div>
       <div class="tl-head"><span class="tl-title">Pool-aFRR · laatste 24 uur</span>
-        <span class="tl-leg"><i class="e"></i>export <i class="i"></i>import <i class="b"></i>beide</span></div>
+        <span class="tl-leg"><span class="tl-vol" title="Blokjes vullen naar volume (12 kW × 15 min = vol)" @click=${volToggle}>volume</span><i class="e"></i>export <i class="i"></i>import <i class="b"></i>beide</span></div>
       ${rows.length ? rows.map(r => html`
         <div class="tl-row">
           <div class="tl-name">${r.name}<small>${[Number.isFinite(r.soc) ? 'SOC ' + r.soc + '%' : '', r.now !== 'geen' ? html`<b class="${r.now === 'export' ? 'te' : 'ti'}">nu ${r.now}</b>` : ''].filter(v => v).map((v, i) => i ? html` · ${v}` : v)}</small></div>
-          <div class="tl-bar" data-name="${r.name}" @pointermove=${tip} @pointerdown=${tip} @pointerleave=${tip}>${r.cells.map((c, k) => html`<span class="${c.d === null ? '' : cls(c.d)}${st && st.name === r.name && st.k === k ? ' hov' : ''}" data-tip="${t(c.q)}–${t(c.q + Q)} · ${c.d === null ? 'geen aFRR' : label(c.d) + extra(c)}${c.b ? (Number.isFinite(c.b.soc) ? ' · gestart ' + t(c.b.from) + ' bij SOC ' + c.b.soc + '%' : '') + (Number.isFinite(c.soc) ? ' · dit kwartier ' + c.soc + (Number.isFinite(c.soce) && c.soce !== c.soc ? '→' + c.soce : '') + '%' : '') : (Number.isFinite(c.soc) ? ' · SOC ' + c.soc + '%' : '')}"></span>`)}</div>
+          <div class="tl-bar" data-name="${r.name}" @pointermove=${tip} @pointerdown=${tip} @pointerleave=${tip}>${r.cells.map((c, k) => html`<span style="--fill:${fill(c)}%" class="${c.d === null ? '' : cls(c.d)}${st && st.name === r.name && st.k === k ? ' hov' : ''}" data-tip="${t(c.q)}–${t(c.q + Q)} · ${c.d === null ? 'geen aFRR' : label(c.d) + extra(c)}${c.b ? (Number.isFinite(c.b.soc) ? ' · gestart ' + t(c.b.from) + ' bij SOC ' + c.b.soc + '%' : '') + (Number.isFinite(c.soc) ? ' · dit kwartier ' + c.soc + (Number.isFinite(c.soce) && c.soce !== c.soc ? '→' + c.soce : '') + '%' : '') : (Number.isFinite(c.soc) ? ' · SOC ' + c.soc + '%' : '')}"></span>`)}</div>
         </div>`) : html`<div class="tl-none">Nog geen geschiedenis.</div>`}
       <div class="tl-row tl-axis"><div></div><div class="tl-ticks">${ticks.map(x => html`<span style="left:${x.k / N * 100}%">${t(x.q)}</span>`)}</div></div>
     </div>`;
